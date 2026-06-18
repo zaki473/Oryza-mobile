@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'core/theme.dart';
-import 'screens/dashboard_screen.dart';
+import 'screens/splash_screen.dart';
 import 'firebase_options.dart';
 
 void main() async {
@@ -21,7 +21,7 @@ class SmartOryzaApp extends StatelessWidget {
       title: 'SmartOryza',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.theme,
-      home: const DashboardScreen(),
+      home: const SplashScreen(),
     );
   }
 }

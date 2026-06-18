@@ -1,8 +1,11 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../core/theme.dart';
+import '../screens/login_screen.dart';
 import '../services/firebase_service.dart';
 import '../models/sensor_data.dart';
 import '../models/log_entry.dart';
@@ -12,6 +15,7 @@ import 'log_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
+
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
@@ -25,6 +29,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final List<FlSpot> _soilPts = [];
   final List<FlSpot> _waterPts = [];
   double _chartX = 0;
+
+  StreamSubscription? _dataSub;
+  StreamSubscription? _controlSub;
+  StreamSubscription? _siklusSub;
 
   final _dummy = [
     {},
@@ -63,7 +71,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
-    FirebaseService.latestDataStream.listen((d) {
+    
+    _dataSub = FirebaseService.latestDataStream.listen((d) {
       if (!mounted) return;
       setState(() {
         _data = d;
@@ -76,12 +85,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _chartX++;
       });
     });
-    FirebaseService.controlStream.listen((v) {
+
+    _controlSub = FirebaseService.controlStream.listen((v) {
       if (mounted) setState(() => _ctrl = v);
     });
-    FirebaseService.siklusStream.listen((v) {
+
+    _siklusSub = FirebaseService.siklusStream.listen((v) {
       if (mounted) setState(() => _tanggalTanam = v);
     });
+  }
+
+  @override
+  void dispose() {
+    _dataSub?.cancel();
+    _controlSub?.cancel();
+    _siklusSub?.cancel();
+    super.dispose();
   }
 
   int get _hariKe {
@@ -99,6 +118,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
       pir: d['pir'] as String,
       mode: d['mode'] as String,
     );
+  }
+
+  Future<void> _setPintuAir(int value) async {
+    try {
+      await FirebaseService.setControlPintuAir(value);
+    } catch (e) {
+      debugPrint('Gagal set kontrol pintu air: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Gagal mengubah mode irigasi: $e')),
+      );
+    }
+  }
+
+  void _doMulaiTanam() async {
+    await FirebaseService.mulaiTanamBaru();
+  }
+
+  void _doReset() async {
+    await FirebaseService.resetSiklusTanam();
   }
 
   @override
@@ -182,32 +221,63 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ),
             const Spacer(),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(
-                color: Colors.green.shade50,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: Colors.green.shade200),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.circle,
-                    size: 8,
-                    color: _tab == 0 ? Colors.green : Colors.orange,
+            
+            GestureDetector(
+              onTap: () async {
+                final konfirmasi = await showDialog<bool>(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text('Keluar Aplikasi?'),
+                    content: const Text('Apakah Anda yakin ingin keluar dari akun SmartOryza?'),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context, false),
+                        child: const Text('Batal', style: TextStyle(color: Colors.grey)),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.pop(context, true),
+                        child: const Text('Keluar', style: TextStyle(color: Colors.red)),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 6),
-                  Text(
-                    _tab == 0 ? 'Online' : 'Dummy',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                      color: _tab == 0
-                          ? Colors.green.shade700
-                          : Colors.orange.shade700,
+                );
+
+                if (konfirmasi == true) {
+                  await FirebaseAuth.instance.signOut();
+                  if (!mounted) return; // Menggunakan mounted dari State untuk menghindari async gap error
+                  
+                  Navigator.pushAndRemoveUntil(
+                    context,
+                    MaterialPageRoute(builder: (_) => const LoginScreen()),
+                    (route) => false,
+                  );
+                }
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade50,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.red.shade200),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.logout_rounded,
+                      size: 14,
+                      color: Colors.red.shade700,
                     ),
-                  ),
-                ],
+                    const SizedBox(width: 6),
+                    Text(
+                      'Logout',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.red.shade700,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ],
@@ -260,10 +330,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 200),
                 margin: const EdgeInsets.only(right: 10),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 11,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
                 decoration: BoxDecoration(
                   color: active ? AppTheme.brand900 : Colors.white,
                   borderRadius: BorderRadius.circular(14),
@@ -302,9 +369,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         Text(
                           '${lahan['blok']} — ${lahan['status']}',
                           style: TextStyle(
-                            color: active
-                                ? Colors.white60
-                                : Colors.grey.shade500,
+                            color: active ? Colors.white60 : Colors.grey.shade500,
                             fontSize: 10,
                           ),
                         ),
@@ -475,7 +540,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: Colors.grey.shade100),
       ),
-      child: Column(
+      child: Column( // <--- SUDAH DIPERBAIKI (Titik "." sebelum child dihilangkan)
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
@@ -500,9 +565,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   style: TextStyle(
                     fontSize: 9,
                     fontWeight: FontWeight.bold,
-                    color: isManual
-                        ? Colors.blue.shade700
-                        : Colors.grey.shade600,
+                    color: isManual ? Colors.blue.shade700 : Colors.grey.shade600,
                   ),
                 ),
               ),
@@ -521,25 +584,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
             const SizedBox(height: 8),
             Row(
               children: [
-                Text(
-                  'Auto',
-                  style: TextStyle(fontSize: 10, color: Colors.grey.shade500),
-                ),
+                Text('Auto', style: TextStyle(fontSize: 10, color: Colors.grey.shade500)),
                 SizedBox(
                   height: 24,
                   child: Switch.adaptive(
                     value: isManual,
-                    onChanged: (v) =>
-                        FirebaseService.setControlPintuAir(v ? 2 : 0),
+                    onChanged: (v) => _setPintuAir(v ? 2 : 0),
                     activeTrackColor: Colors.blue.withValues(alpha: 0.5),
                     activeThumbColor: Colors.blue,
                     materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   ),
                 ),
-                Text(
-                  'Manual',
-                  style: TextStyle(fontSize: 10, color: Colors.grey.shade500),
-                ),
+                Text('Manual', style: TextStyle(fontSize: 10, color: Colors.grey.shade500)),
               ],
             ),
             if (isManual) ...[
@@ -547,19 +603,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
               Row(
                 children: [
                   Expanded(
-                    child: _miniBtn(
-                      'BUKA',
-                      Colors.blue,
-                      () => FirebaseService.setControlPintuAir(1),
-                    ),
+                    child: _miniBtn('BUKA', Colors.blue, () => _setPintuAir(1)),
                   ),
                   const SizedBox(width: 6),
                   Expanded(
-                    child: _miniBtn(
-                      'TUTUP',
-                      Colors.red,
-                      () => FirebaseService.setControlPintuAir(2),
-                    ),
+                    child: _miniBtn('TUTUP', Colors.red, () => _setPintuAir(2)),
                   ),
                 ],
               ),
@@ -570,8 +618,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _miniBtn(String label, Color color, VoidCallback onTap) =>
-      GestureDetector(
+  Widget _miniBtn(String label, Color color, VoidCallback onTap) => GestureDetector(
         onTap: onTap,
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 7),
@@ -597,10 +644,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final fase = _hariKe > 150
         ? '🌾 Siap Panen'
         : _hariKe > 120
-        ? '⚠️ Pengeringan'
-        : _tanggalTanam != null
-        ? '🌱 Vegetatif'
-        : 'Belum Tanam';
+            ? '⚠️ Pengeringan'
+            : _tanggalTanam != null
+                ? '🌱 Vegetatif'
+                : 'Belum Tanam';
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
@@ -651,10 +698,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 4,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
                   color: Colors.white.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(20),
@@ -684,7 +728,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // ── CHARTS ───────────────────────────────────────────────────────────────
   // ── CHARTS ───────────────────────────────────────────────────────────────
   Widget _charts() => Container(
     padding: const EdgeInsets.all(16),
@@ -716,7 +759,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
           interval: 25,
         ),
         const SizedBox(height: 18),
-        // Diubah: maxY jadi 400, interval jadi 50 agar kelipatan 0, 50, 100, 200, dst bisa tercakup
         _chartRow(
           'Level Air (cm)',
           Colors.teal,
@@ -758,8 +800,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         const SizedBox(height: 8),
         ClipRect(
           child: SizedBox(
-            height:
-                140, // Sedikit dinaikkan agar visualisasi range 0-400 lebih lega
+            height: 140,
             child: LineChart(
               LineChartData(
                 clipData: const FlClipData.all(),
@@ -768,7 +809,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   drawVerticalLine: false,
                   horizontalInterval: interval,
                   getDrawingHorizontalLine: (v) {
-                    // Saring garis grid horizontal khusus untuk grafik air agar pas dengan label text
                     if (isWaterChart) {
                       final val = v.toInt();
                       if (val != 0 &&
@@ -797,7 +837,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       interval: interval,
                       getTitlesWidget: (v, _) {
                         final val = v.toInt();
-                        // Jika ini grafik air, filter angka yang mau ditampilkan saja
                         if (isWaterChart) {
                           if (val == 0 ||
                               val == 50 ||
@@ -807,22 +846,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               val == 400) {
                             return Text(
                               val.toString(),
-                              style: TextStyle(
-                                fontSize: 9,
-                                color: Colors.grey.shade400,
-                              ),
+                              style: TextStyle(fontSize: 9, color: Colors.grey.shade400),
                             );
                           }
-                          return const SizedBox.shrink(); // Sembunyikan angka interval 150, 250, 350
+                          return const SizedBox.shrink();
                         }
-
-                        // Default untuk grafik kelembapan tanah
                         return Text(
                           val.toString(),
-                          style: TextStyle(
-                            fontSize: 9,
-                            color: Colors.grey.shade400,
-                          ),
+                          style: TextStyle(fontSize: 9, color: Colors.grey.shade400),
                         );
                       },
                     ),
@@ -879,82 +910,60 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 child: Padding(
                   padding: const EdgeInsets.all(16),
                   child: Text(
-                    'Menghubungkan ke Firebase...',
+                    'Belum ada riwayat aktivitas...',
                     style: TextStyle(color: Colors.grey.shade400),
                   ),
                 ),
               );
             }
             return Column(
-              children: snap.data!
-                  .map(
-                    (log) => Container(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      padding: const EdgeInsets.all(11),
-                      decoration: BoxDecoration(
-                        color: log.isBahaya
-                            ? Colors.red.shade50
-                            : Colors.grey.shade50,
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border(
-                          left: BorderSide(
-                            color: log.isBahaya ? Colors.red : Colors.green,
-                            width: 3,
-                          ),
-                        ),
-                      ),
-                      child: Row(
+              children: snap.data!.map((log) => Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.all(11),
+                decoration: BoxDecoration(
+                  color: log.isBahaya ? Colors.red.shade50 : Colors.grey.shade50,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border(
+                    left: BorderSide(
+                      color: log.isBahaya ? Colors.red : Colors.green,
+                      width: 3,
+                    ),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  log.createdAt ?? 'Baru saja',
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    color: Colors.grey.shade500,
-                                  ),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  'Tanah: ${log.soil}% | Air: ${log.water.toStringAsFixed(1)}cm',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.grey.shade700,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ],
-                            ),
+                          Text(
+                            log.createdAt ?? 'Baru saja',
+                            style: TextStyle(fontSize: 10, color: Colors.grey.shade500),
                           ),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 3,
-                            ),
-                            decoration: BoxDecoration(
-                              color: log.isBahaya
-                                  ? Colors.red.shade100
-                                  : Colors.green.shade100,
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: Text(
-                              log.isBahaya ? 'Bahaya' : 'Aman',
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                                color: log.isBahaya
-                                    ? Colors.red.shade700
-                                    : Colors.green.shade700,
-                              ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'Tanah: ${log.soil}% | Air: ${log.water.toStringAsFixed(1)}cm',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey.shade700,
+                              fontWeight: FontWeight.w500,
                             ),
                           ),
                         ],
                       ),
                     ),
-                  )
-                  .toList(),
+                    // <--- SUDAH DIPERBAIKI (Menggunakan log.status / fallback string kosong aman jika field kosong)
+                    Text(
+                      log.isBahaya ? 'Hama Terdeteksi' : 'Kondisi Stabil',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: log.isBahaya ? Colors.red.shade700 : Colors.green.shade700,
+                      ),
+                    ),
+                  ],
+                ),
+              )).toList(),
             );
           },
         ),
@@ -962,104 +971,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
     ),
   );
 
-  Widget _viewAllBtn() => GestureDetector(
-    onTap: () => Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => const LogScreen()),
-    ),
-    child: Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 14),
-      decoration: BoxDecoration(
-        border: Border.all(color: AppTheme.brand900),
-        borderRadius: BorderRadius.circular(12),
+  // ── VIEW ALL BUTTON ───────────────────────────────────────────────────────
+  Widget _viewAllBtn() => SizedBox(
+    width: double.infinity,
+    child: OutlinedButton(
+      onPressed: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const LogScreen()),
+        );
+      },
+      style: OutlinedButton.styleFrom(
+        foregroundColor: AppTheme.brand900,
+        side: BorderSide(color: Colors.grey.shade200),
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.history, color: AppTheme.brand900, size: 17),
-          const SizedBox(width: 8),
-          Text(
-            'Lihat Semua Log Aktivitas',
-            style: TextStyle(
-              color: AppTheme.brand900,
-              fontWeight: FontWeight.bold,
-              fontSize: 13,
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
-
-  // ── DIALOG ACTIONS ───────────────────────────────────────────────────────
-  void _doMulaiTanam() => showDialog(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      title: const Text(
-        'Mulai Tanam Baru',
-        style: TextStyle(fontWeight: FontWeight.bold),
-      ),
-      content: const Text(
-        'Mulai siklus tanam baru hari ini? Data sebelumnya akan di-reset.',
-      ),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(ctx),
-          child: const Text('Batal'),
-        ),
-        ElevatedButton(
-          onPressed: () async {
-            Navigator.pop(ctx);
-            await FirebaseService.mulaiTanamBaru();
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('✅ Siklus tanam baru dimulai!')),
-              );
-            }
-          },
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppTheme.brand500,
-            foregroundColor: Colors.white,
-          ),
-          child: const Text('Mulai'),
-        ),
-      ],
-    ),
-  );
-
-  void _doReset() => showDialog(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      title: const Text(
-        'Reset Siklus',
-        style: TextStyle(fontWeight: FontWeight.bold),
-      ),
-      content: const Text('Reset siklus tanam menjadi Hari 0?'),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(ctx),
-          child: const Text('Batal'),
-        ),
-        ElevatedButton(
-          onPressed: () async {
-            Navigator.pop(ctx);
-            await FirebaseService.resetSiklusTanam();
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('🔄 Siklus berhasil di-reset.')),
-              );
-            }
-          },
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.red,
-            foregroundColor: Colors.white,
-          ),
-          child: const Text('Reset'),
-        ),
-      ],
+      child: const Text('Lihat Semua Riwayat', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
     ),
   );
 }

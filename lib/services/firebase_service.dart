@@ -1,10 +1,17 @@
 import 'package:firebase_database/firebase_database.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../models/sensor_data.dart';
 import '../models/log_entry.dart';
 
 class FirebaseService {
   static final _db = FirebaseDatabase.instance;
+  static final _auth = FirebaseAuth.instance; 
 
+  // Fungsi login menggunakan Firebase Auth
+  static Future<UserCredential> login(String email, String password) async {
+    return await _auth.signInWithEmailAndPassword(email: email, password: password);
+  }
+  
   static Stream<SensorData> get latestDataStream =>
       _db.ref('iot/latest').onValue.map((e) {
         final data = e.snapshot.value as Map<dynamic, dynamic>?;
